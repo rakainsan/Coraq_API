@@ -41,28 +41,23 @@ groq_client = Groq(api_key=GROQ_API_KEY)
 def ask_llm(prompt):
     system_prompt = """
     Kamu adalah CoraqBot, chatbot IoT untuk monitoring limbah air batik.
-
-    Kamu memahami:
-    - sensor pH
-    - sensor turbidity (kekeruhan)
-    - sensor TDS
-    - sensor suhu
-    - prediksi limbah air
-    - deteksi anomali limbah
-
-    Jawablah dengan bahasa Indonesia yang ramah dan mudah dipahami.
-    Fokus pada limbah batik, IoT, sensor, analitik, dan edukasi.
+    Kamu memahami sensor pH, turbidity, TDS, suhu, prediksi limbah dan anomali.
     """
 
-    completion = groq_client.chat.completions.create(
-        model="llama3-8b-8192",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt}
-        ]
-    )
+    try:
+        completion = groq_client.chat.completions.create(
+            model="llama-3.1-8b-instant",   
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user",    "content": prompt}
+            ]
+        )
 
-    return completion.choices[0].message["content"]
+        return completion.choices[0].message.content
+
+    except Exception as e:
+        return f"LLM ERROR: {str(e)}"
+
 
 # ====================
 # TELEGRAM SENDER
@@ -75,7 +70,8 @@ def send_telegram_message(chat_id, text):
         "text": text,
         "parse_mode": "Markdown"
     }
-    requests.post(url, json=payload)
+    r = requests.post(url, data=payload)
+
 
 # ====================
 # HOME
