@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Water Waste Prediction</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: 'Poppins', sans-serif; margin: 40px; background: #f8f9fa; }
+        h2 { color: #007b83; text-align: center; }
+        .container { width: 80%; margin: auto; text-align: center; }
+        select { padding: 8px 12px; margin-bottom: 20px; border-radius: 8px; border: 1px solid #ccc; }
+        canvas { background: white; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>📅 Prediksi Volume Limbah Berdasarkan Bulan</h2>
+
+        <label for="monthSelect">Pilih Bulan: </label>
+        <select id="monthSelect"></select>
+
+        <canvas id="wasteChart" width="700" height="350"></canvas>
+    </div>
+
+    <script>
+        const monthSelect = document.getElementById('monthSelect');
+        const ctx = document.getElementById('wasteChart');
+        let chart;
+
+        
+        const today = new Date();
+        for (let i = 0; i < 6; i++) {
+            const monthDate = new Date(today.getFullYear(), today.getMonth() + i, 1);
+            const option = document.createElement('option');
+            const monthName = monthDate.toLocaleString('id-ID', { month: 'long' });
+            option.value = i; 
+            option.textContent = `${monthName} ${monthDate.getFullYear()}`;
+            monthSelect.appendChild(option);
+        }
+
+        async function fetchPredictionsForMonth(monthDate) {
+            const year = monthDate.getFullYear();
+            const month = monthDate.getMonth();
+            const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+            const labels = [];
+            const predictions = [];
+
+            for (let day = 1; day <= daysInMonth; day++) {
+                const date = new Date(year, month, day);
+                const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+                const response = await fetch('/predict', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        sensor_count: Math.random() * 100,
+                        date: dateStr
+                    })
+                });
+
+                const data = await response.json();
+                labels.push(day);
+                predictions.push(data.predicted_volume_liters || 0);
+            }
+
+            return { labels, predictions };
+        }
+
+        async function renderChartForMonth(monthDate) {
+            const { labels, predictions } = await fetchPredictionsForMonth(monthDate);
+            const monthName = monthDate.toLocaleString('id-ID', { month: 'long', year: 'numeric' });
+
+            if (chart) chart.destroy();
+
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: `Volume Limbah (${monthName})`,
+                        data: predictions,
+                        borderColor: 'rgba(0, 150, 136, 0.8)',
+                        backgroundColor: 'rgba(0, 150, 136, 0.1)',
+                        borderWidth: 2,
+                        tension: 0.3,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: { beginAtZero: true, title: { display: true, text: 'Volume (liter)' } },
+                        x: { title: { display: true, text: 'Tanggal' } }
+                    }
+                }
+            });
+        }
+
+        // --- Saat halaman dimuat, render bulan pertama (bulan sekarang)
+        window.onload = async () => {
+            const firstOption = monthSelect.options[0].value;
+            const [year, month, day] = firstOption.split('-').map(Number);
+            const defaultMonth = new Date(year, month - 1, 1); // month - 1 karena JS month dimulai dari 0
+            await renderChartForMonth(defaultMonth);
+        };
+
+        monthSelect.addEventListener('change', async () => {
+            const selectedIndex = parseInt(monthSelect.value);
+            const selectedDate = new Date(today.getFullYear(), today.getMonth() + selectedIndex, 1);
+            await renderChartForMonth(selectedDate);
+        });
+    </script>
+</body>
+</html>
