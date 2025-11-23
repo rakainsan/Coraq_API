@@ -11,39 +11,47 @@ from groq import Groq
 app = Flask(__name__)
 CORS(app)
 
-# == Load Models ==
+# ====================
+# LOAD ML MODELS
+# ====================
+
 svr = joblib.load("model_svr.pkl")
 svm = joblib.load("model_svm.pkl")
 scaler_X = joblib.load("scaler_X.pkl")
 scaler_y = joblib.load("scaler_y.pkl")
 
-# == Load Environment Variables ==
+# ====================
+# ENVIRONMENT VARIABLES
+# ====================
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# == Init Groq LLM ==
+if not BOT_TOKEN:
+    print("ERROR: BOT_TOKEN tidak ditemukan!")
+if not GROQ_API_KEY:
+    print("ERROR: GROQ_API_KEY tidak ditemukan!")
+
+# ====================
+# LLM GROQ
+# ====================
+
 groq_client = Groq(api_key=GROQ_API_KEY)
 
 def ask_llm(prompt):
-    """ Query LLM Groq dengan persona CoraqBot """
-
     system_prompt = """
-    Kamu adalah CoraqBot, sebuah chatbot cerdas berbasis IoT yang dirancang khusus
-    untuk mendukung sistem pengolahan limbah air batik.
+    Kamu adalah CoraqBot, chatbot IoT untuk monitoring limbah air batik.
 
-    Kamu terintegrasi dengan sensor IoT seperti pH, suhu, kekeruhan, TDS,
-    serta modul prediksi dan deteksi anomali limbah.
+    Kamu memahami:
+    - sensor pH
+    - sensor turbidity (kekeruhan)
+    - sensor TDS
+    - sensor suhu
+    - prediksi limbah air
+    - deteksi anomali limbah
 
-    Tugasmu:
-    - Menjawab pertanyaan tentang pengolahan limbah batik
-    - Menjelaskan fungsi sensor pH, suhu, turbidity, TDS, dan sensor lain
-    - Memberikan edukasi tentang kualitas air limbah
-    - Memberikan insight terhadap data prediksi atau anomali
-    - Menjawab dengan bahasa Indonesia yang ramah dan mudah dipahami
-
-    Jangan memberikan saran medis atau legal.
-    Fokus hanya pada domain limbah air batik, IoT monitoring, dan penjelasan data.
+    Jawablah dengan bahasa Indonesia yang ramah dan mudah dipahami.
+    Fokus pada limbah batik, IoT, sensor, analitik, dan edukasi.
     """
 
     completion = groq_client.chat.completions.create(
@@ -56,15 +64,34 @@ def ask_llm(prompt):
 
     return completion.choices[0].message["content"]
 
-# == Telegram Alert ==
-def send_telegram_alert(message):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"}
-    requests.post(url, data=payload)
+# ====================
+# TELEGRAM SENDER
+# ====================
 
-@app.route('/')
+def send_telegram_message(chat_id, text):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "Markdown"
+    }
+    requests.post(url, json=payload)
+
+# ====================
+# HOME
+# ====================
+
+@app.route("/")
 def home():
-    return jsonify({"status": "API jalan bro", "llm_status": "Groq siap dipakai"})
+    return jsonify({
+        "status": "API aktif",
+        "telegram_webhook": "OK",
+        "groq_llm": "siap digunakan"
+    })
+
+# ====================
+# ML PREDICTION ENDPOINT
+# ====================
 
 @app.route('/predict', methods=['POST'])
 def predict():
@@ -87,7 +114,9 @@ def predict():
             X_scaled = scaler_X.transform(X)
 
             y_pred_scaled = svr.predict(X_scaled)
-            y_pred = scaler_y.inverse_transform(y_pred_scaled.reshape(-1, 1))[0][0]
+            y_pred = scaler_y.inverse_transform(
+                y_pred_scaled.reshape(-1, 1)
+            )[0][0]
 
             is_anomaly = int(svm.predict(X_scaled)[0])
 
@@ -97,84 +126,56 @@ def predict():
                 "is_anomaly": bool(is_anomaly)
             })
 
-            if i == 0 and y_pred > 23000:
-                message = (
-                    f"🚨 *PERINGATAN TINGGI VOLUME LIMBAH!*\n"
-                    f"Tanggal: {current_date.strftime('%d-%m-%Y')}\n"
-                    f"Sensor: {sensor_count}\n"
-                    f"Prediksi Volume: {round(y_pred, 2)} liter\n"
-                    f"Status: ⚠️ Melebihi ambang batas 23.000 liter!"
-                )
-                send_telegram_alert(message)
-
-        response = {
+        return jsonify({
             "start_date": start_date.strftime("%Y-%m-%d"),
-            "month": start_date.strftime("%B %Y"),
             "sensor_count": sensor_count,
             "predictions": predictions
-        }
+        })
 
-        return jsonify(response)
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
+# ====================
+# LLM ASK ENDPOINT
+# ====================
+
 @app.route("/ask", methods=["POST"])
 def ask():
-    """ API untuk query LLM Groq """
     prompt = request.json.get("prompt", "")
     answer = ask_llm(prompt)
     return jsonify({"response": answer})
 
-@app.route('/prediction')
-def prediction_page():
-    return render_template('prediction.html')
+# ====================
+# TELEGRAM WEBHOOK ENDPOINT
+# ====================
 
-# ===========================
-# == TELEGRAM WEBHOOK API ==
-# ===========================
-
-@app.route(f"/webhook", methods=["POST"])
+@app.route(f"/webhook/{BOT_TOKEN}", methods=["POST"])
 def telegram_webhook():
-    """ Endpoint menerima pesan dari Telegram """
     data = request.get_json()
 
-    # Pastikan itu pesan teks
     if "message" not in data:
-        return jsonify({"status": "ignored"}), 200
+        return jsonify({"status": "ignored"})
 
     chat_id = data["message"]["chat"]["id"]
-    user_text = data["message"].get("text", "")
+    text = data["message"].get("text", "")
 
-    # Jika user kirim "/start"
-    if user_text == "/start":
+    # Handle /start
+    if text.lower() == "/start":
         welcome = (
             "👋 Halo! Aku *CoraqBot*.\n"
             "Aku terhubung dengan sistem IoT limbah batik.\n"
             "Tanya apa saja tentang sensor, limbah batik, prediksi, atau anomali!"
         )
-        send_telegram_alert_custom(chat_id, welcome)
+        send_telegram_message(chat_id, welcome)
         return jsonify({"status": "ok"})
 
-    # == Kirim ke Groq ==
-    try:
-        answer = ask_llm(user_text)
-        send_telegram_alert_custom(chat_id, answer)
-    except Exception as e:
-        send_telegram_alert_custom(chat_id, f"⚠️ Terjadi error LLM: {str(e)}")
+    # Pertanyaan biasa → LLM Groq
+    reply = ask_llm(text)
+    send_telegram_message(chat_id, reply)
 
-    return jsonify({"status": "processed"}), 200
+    return jsonify({"status": "ok"})
 
-
-def send_telegram_alert_custom(chat_id, message):
-    """ Fungsi kirim balasan langsung ke user """
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": message,
-        "parse_mode": "Markdown"
-    }
-    requests.post(url, data=payload)
-
+# ====================
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
