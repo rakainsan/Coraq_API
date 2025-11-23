@@ -129,5 +129,52 @@ def ask():
 def prediction_page():
     return render_template('prediction.html')
 
+# ===========================
+# == TELEGRAM WEBHOOK API ==
+# ===========================
+
+@app.route(f"/webhook", methods=["POST"])
+def telegram_webhook():
+    """ Endpoint menerima pesan dari Telegram """
+    data = request.get_json()
+
+    # Pastikan itu pesan teks
+    if "message" not in data:
+        return jsonify({"status": "ignored"}), 200
+
+    chat_id = data["message"]["chat"]["id"]
+    user_text = data["message"].get("text", "")
+
+    # Jika user kirim "/start"
+    if user_text == "/start":
+        welcome = (
+            "👋 Halo! Aku *CoraqBot*.\n"
+            "Aku terhubung dengan sistem IoT limbah batik.\n"
+            "Tanya apa saja tentang sensor, limbah batik, prediksi, atau anomali!"
+        )
+        send_telegram_alert_custom(chat_id, welcome)
+        return jsonify({"status": "ok"})
+
+    # == Kirim ke Groq ==
+    try:
+        answer = ask_llm(user_text)
+        send_telegram_alert_custom(chat_id, answer)
+    except Exception as e:
+        send_telegram_alert_custom(chat_id, f"⚠️ Terjadi error LLM: {str(e)}")
+
+    return jsonify({"status": "processed"}), 200
+
+
+def send_telegram_alert_custom(chat_id, message):
+    """ Fungsi kirim balasan langsung ke user """
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": message,
+        "parse_mode": "Markdown"
+    }
+    requests.post(url, data=payload)
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
