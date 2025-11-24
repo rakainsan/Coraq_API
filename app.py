@@ -26,6 +26,8 @@ scaler_y = joblib.load("scaler_y.pkl")
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+ADMIN_CHAT_ID = os.getenv("CHAT_ID")   
+
 
 if not BOT_TOKEN:
     print("ERROR: BOT_TOKEN tidak ditemukan!")
@@ -40,8 +42,8 @@ groq_client = Groq(api_key=GROQ_API_KEY)
 
 def ask_llm(prompt):
     system_prompt = """
-            Kamu adalah **CoraqBot**, chatbot cerdas berbasis IoT yang terhubung dengan sistem pengolahan limbah air batik bernama **CORAQ (Continuous Observation Remote Analysis Quan)**.
-
+            Kamu adalah **CoraqBot**, chatbot cerdas berbasis IoT yang terhubung dengan sistem pengolahan limbah air batik bernama **CORAQ (Continuous Observation Remote Analysis Quantification)**.
+            Sistem ini ada untuk menjawab permasalahan lingkungan perairan pemukiman warga kota pekalongan yang sudah marak adanya industri pewarnaan kain batik yang air limbahnya dibuang langsung ke saluran air pemukiman
             Tugasmu:
             1. Menjawab pertanyaan pengguna mengenai sensor, IoT, proses pengolahan limbah, machine learning, dan monitoring.
             2. Menjadi asisten ramah yang menggunakan bahasa Indonesia yang jelas, ringkas, dan mudah dipahami.
@@ -200,6 +202,18 @@ def predict():
 
             is_anomaly = int(svm.predict(X_scaled)[0])
 
+            # ============== NOTIFIKASI TELEGRAM ==============
+            if is_anomaly == 1 and ADMIN_CHAT_ID:
+                alert_msg = (
+                    f"⚠️ *Peringatan Anomali Volume Limbah!*\n\n"
+                    f"Tanggal: *{current_date.strftime('%Y-%m-%d')}*\n"
+                    f"Perkiraan volume: *{round(float(y_pred), 2)} liter*\n"
+                    f"Status: *Anomali terdeteksi*\n\n"
+                    f"Silakan cek dashboard CORAQ untuk detail lebih lanjut dan segera ambil langkah."
+                )
+                send_telegram_message(ADMIN_CHAT_ID, alert_msg)
+            # ==================================================
+
             predictions.append({
                 "date": current_date.strftime("%Y-%m-%d"),
                 "predicted_volume_liters": round(float(y_pred), 2),
@@ -214,6 +228,7 @@ def predict():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 400
+
 
 # ====================
 # LLM ASK ENDPOINT
