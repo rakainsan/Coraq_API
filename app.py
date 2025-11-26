@@ -178,51 +178,102 @@ def home():
 @app.route('/predict', methods=['POST'])
 def predict():
     data = request.get_json()
-    try:
-        sensor_count = float(data['sensor_count'])
-        date_str = data['date']
-        start_date = pd.to_datetime(date_str).tz_localize(None)
 
-        num_days = 30
+    try:
+        # =========================
+        # VALIDASI START DATE
+        # =========================
+        start_date_raw = data.get("start_date") or data.get("date")
+        if not start_date_raw:
+            return jsonify({"error": "start_date atau date wajib diisi"}), 400
+
+        try:
+            start_date = pd.to_datetime(start_date_raw).tz_localize(None)
+        except:
+            return jsonify({"error": "Format tanggal tidak valid"}), 400
+
+        # =========================
+        # VALIDASI SENSOR
+        # =========================
+        sensor_raw = data.get("sensor_count", None)
+        try:
+            sensor_count = float(str(sensor_raw).replace(",", ""))
+        except:
+            return jsonify({"error": "sensor_count harus angka"}), 400
+
+        # =========================
+        # VALIDASI JUMLAH HARI
+        # =========================
+        days = int(data.get("days", 30))
+        if days < 1 or days > 365:
+            return jsonify({"error": "days harus 1–365"}), 400
+
+        # =========================
+        # VARIABEL UNTUK FILTER ANOMALI
+        # =========================
+        predicted_values = []
+
         predictions = []
 
-        for i in range(num_days):
+        for i in range(days):
             current_date = start_date + timedelta(days=i)
+
             dayofweek = current_date.weekday()
             month = current_date.month
             dayofyear = current_date.timetuple().tm_yday
 
+            # Input model
             X = np.array([[sensor_count, dayofweek, month, dayofyear]])
             X_scaled = scaler_X.transform(X)
 
-            y_pred_scaled = svr.predict(X_scaled)
-            y_pred = scaler_y.inverse_transform(
-                y_pred_scaled.reshape(-1, 1)
-            )[0][0]
+            # Prediksi volume
+            y_scaled = svr.predict(X_scaled)
+            y_pred = scaler_y.inverse_transform(y_scaled.reshape(-1, 1))[0][0]
 
-            is_anomaly = int(svm.predict(X_scaled)[0])
+            predicted_values.append(y_pred)
 
-            # ============== NOTIFIKASI TELEGRAM ==============
-            if is_anomaly == 1 and ADMIN_CHAT_ID:
-                alert_msg = (
-                    f"⚠️ *Peringatan Anomali Volume Limbah!*\n\n"
-                    f"Tanggal: *{current_date.strftime('%Y-%m-%d')}*\n"
-                    f"Perkiraan volume: *{round(float(y_pred), 2)} liter*\n"
-                    f"Status: *Anomali terdeteksi*\n\n"
-                    f"Silakan cek dashboard CORAQ untuk detail lebih lanjut dan segera ambil langkah."
-                )
-                send_telegram_message(ADMIN_CHAT_ID, alert_msg)
-            # ==================================================
+            # Prediksi anomali SVM
+            svm_pred = int(svm.predict(X_scaled)[0])
 
             predictions.append({
                 "date": current_date.strftime("%Y-%m-%d"),
                 "predicted_volume_liters": round(float(y_pred), 2),
-                "is_anomaly": bool(is_anomaly)
+                "is_anomaly": bool(svm_pred)
             })
 
+        # =====================================================
+        # FILTERING ANOMALI TAMBAHAN (untuk mengurangi spam)
+        # =====================================================
+        if len(predicted_values) > 3:
+            mean_volume = np.mean(predicted_values)
+            std_volume = np.std(predicted_values)
+
+            for p in predictions:
+                if p["is_anomaly"]:
+                    dev = abs(p["predicted_volume_liters"] - mean_volume)
+
+                    # Kalau anomali tidak cukup ekstrem → bukan anomali
+                    if dev < 0.8 * std_volume:
+                        p["is_anomaly"] = False
+
+        # =====================================================
+        # KIRIM TELEGRAM (1 pesan per hari, tidak spam)
+        # =====================================================
+        for p in predictions:
+            if p["is_anomaly"] and ADMIN_CHAT_ID:
+                msg = (
+                    f"⚠️ *Anomali Volume Limbah Terdeteksi!*\n\n"
+                    f"Tanggal: *{p['date']}*\n"
+                    f"Perkiraan volume: *{p['predicted_volume_liters']} liter*\n"
+                    f"Status: *Anomali*\n"
+                )
+                send_telegram_message(ADMIN_CHAT_ID, msg)
+
+        # =====================================================
         return jsonify({
             "start_date": start_date.strftime("%Y-%m-%d"),
             "sensor_count": sensor_count,
+            "days": days,
             "predictions": predictions
         })
 
