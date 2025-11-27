@@ -208,6 +208,11 @@ def predict():
         if days < 1 or days > 365:
             return jsonify({"error": "days harus 1–365"}), 400
 
+        # =========================
+        # VARIABEL UNTUK FILTER ANOMALI
+        # =========================
+        predicted_values = []
+
         predictions = []
 
         for i in range(days):
@@ -225,24 +230,46 @@ def predict():
             y_scaled = svr.predict(X_scaled)
             y_pred = scaler_y.inverse_transform(y_scaled.reshape(-1, 1))[0][0]
 
-            # =============================
-            # 🚨 NOTIFIKASI VOLUME ≥ 20.000
-            # =============================
-            if y_pred >= 20000 and ADMIN_CHAT_ID:
-                msg = (
-                    f"🚨 *PERINGATAN VOLUME LIMBAH TINGGI!*\n\n"
-                    f"📅 Tanggal: *{current_date.strftime('%Y-%m-%d')}*\n"
-                    f"🌊 Perkiraan volume: *{round(float(y_pred), 2)} liter*\n"
-                    f"🔴 Status: *MELEBIHI BATAS AMAN 20.000 LITER*\n\n"
-                    f"Segera lakukan pemeriksaan dan tindakan penanganan!"
-                )
-                send_telegram_message(ADMIN_CHAT_ID, msg)
+            predicted_values.append(y_pred)
+
+            # Prediksi anomali SVM
+            svm_pred = int(svm.predict(X_scaled)[0])
 
             predictions.append({
                 "date": current_date.strftime("%Y-%m-%d"),
-                "predicted_volume_liters": round(float(y_pred), 2)
+                "predicted_volume_liters": round(float(y_pred), 2),
+                "is_anomaly": bool(svm_pred)
             })
 
+        # =====================================================
+        # FILTERING ANOMALI TAMBAHAN (untuk mengurangi spam)
+        # =====================================================
+        if len(predicted_values) > 3:
+            mean_volume = np.mean(predicted_values)
+            std_volume = np.std(predicted_values)
+
+            for p in predictions:
+                if p["is_anomaly"]:
+                    dev = abs(p["predicted_volume_liters"] - mean_volume)
+
+                    # Kalau anomali tidak cukup ekstrem → bukan anomali
+                    if dev < 0.8 * std_volume:
+                        p["is_anomaly"] = False
+
+        # =====================================================
+        # KIRIM TELEGRAM (1 pesan per hari, tidak spam)
+        # =====================================================
+        for p in predictions:
+            if p["is_anomaly"] and ADMIN_CHAT_ID:
+                msg = (
+                    f"⚠️ *Anomali Volume Limbah Terdeteksi!*\n\n"
+                    f"Tanggal: *{p['date']}*\n"
+                    f"Perkiraan volume: *{p['predicted_volume_liters']} liter*\n"
+                    f"Status: *Anomali*\n"
+                )
+                send_telegram_message(ADMIN_CHAT_ID, msg)
+
+        # =====================================================
         return jsonify({
             "start_date": start_date.strftime("%Y-%m-%d"),
             "sensor_count": sensor_count,
